@@ -2,7 +2,7 @@ use eframe::egui;
 use poll_promise::Promise;
 use std::sync::{Arc, Mutex};
 
-use crate::api::Game;
+use crate::api::{EpicClient, Game};
 use crate::auth::AuthManager;
 use crate::config::Config;
 use crate::games::{GameManager, InstalledGame};
@@ -22,6 +22,7 @@ pub struct LauncherApp {
     state: AppState,
     auth: Arc<Mutex<AuthManager>>,
     config: Arc<Config>,
+    epic_client: Arc<EpicClient>,
     auth_view: AuthView,
     library_view: LibraryView,
     library_games: Vec<Game>,
@@ -37,6 +38,7 @@ impl LauncherApp {
 
         let config = Config::load().unwrap_or_default();
         let auth = AuthManager::new().unwrap_or_default();
+        let epic_client = EpicClient::new().unwrap();
 
         // Check if already authenticated
         let is_authenticated = auth.is_authenticated();
@@ -49,6 +51,7 @@ impl LauncherApp {
             },
             auth: Arc::new(Mutex::new(auth)),
             config: Arc::new(config),
+            epic_client: Arc::new(epic_client),
             auth_view: AuthView::default(),
             library_view: LibraryView::default(),
             library_games: Vec::new(),
@@ -71,44 +74,22 @@ impl LauncherApp {
         }
 
         self.loading_library = true;
-        let _auth = Arc::clone(&self.auth);
-        let _config = Arc::clone(&self.config);
+        self.status_message = "Loading library...".to_string();
 
-        // Create a demo library for now since Epic API integration is not complete
-        self.library_games = vec![
-            Game {
-                app_name: "demo_game_1".to_string(),
-                app_title: "Demo Game 1".to_string(),
-                app_version: "1.0.0".to_string(),
-                install_path: None,
-            },
-            Game {
-                app_name: "demo_game_2".to_string(),
-                app_title: "Epic Adventure".to_string(),
-                app_version: "2.1.0".to_string(),
-                install_path: None,
-            },
-            Game {
-                app_name: "demo_game_3".to_string(),
-                app_title: "Racing Challenge".to_string(),
-                app_version: "1.5.2".to_string(),
-                install_path: None,
-            },
-            Game {
-                app_name: "demo_game_4".to_string(),
-                app_title: "Strategy Master".to_string(),
-                app_version: "3.0.1".to_string(),
-                install_path: None,
-            },
-            Game {
-                app_name: "demo_game_5".to_string(),
-                app_title: "Space Shooter".to_string(),
-                app_version: "1.2.0".to_string(),
-                install_path: None,
-            },
-        ];
-        self.loading_library = false;
-        
+        let auth_manager = self.auth.lock().unwrap();
+        if let Ok(token) = auth_manager.get_token() {
+            let token = token.clone();
+            let epic_client = Arc::clone(&self.epic_client);
+
+            self.library_promise = Some(Promise::spawn_thread("load_library", move || {
+                let rt = tokio::runtime::Runtime::new()
+                    .expect("Failed to create Tokio runtime for library load");
+                rt.block_on(async move { epic_client.get_games(&token).await })
+            }));
+        } else {
+            self.status_message = "Authentication token not found.".to_string();
+            self.loading_library = false;
+        }
     }
 
     fn load_installed_games(&mut self) {
@@ -122,72 +103,8 @@ impl LauncherApp {
     }
 
     fn handle_install(&mut self, app_name: String) {
-        self.status_message = format!("Installing {}...", app_name);
-
-        // Find the game in our library to get proper title
-        let game_title = self
-            .library_games
-            .iter()
-            .find(|g| g.app_name == app_name)
-            .map(|g| g.app_title.clone())
-            .unwrap_or_else(|| format!("Game: {}", app_name));
-
-        let game_version = self
-            .library_games
-            .iter()
-            .find(|g| g.app_name == app_name)
-            .map(|g| g.app_version.clone())
-            .unwrap_or_else(|| "1.0.0".to_string());
-
-        // For demo purposes, we'll create a mock installation
-        let config = Arc::clone(&self.config);
-        let app_name_clone = app_name.clone();
-
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(2));
-
-            // Create the installation directory
-            let install_path = config.install_dir.join(&app_name_clone);
-            if let Err(e) = std::fs::create_dir_all(&install_path) {
-                eprintln!("Failed to create install directory: {}", e);
-                return;
-            }
-
-            // Create a demo installed game entry
-            let game = InstalledGame {
-                app_name: app_name_clone.clone(),
-                app_title: game_title,
-                app_version: game_version,
-                install_path: install_path.clone(),
-                executable: "game.sh".to_string(),
-            };
-
-            // Create a simple demo executable script
-            let executable_path = install_path.join("game.sh");
-            let script_content = format!(
-                "#!/bin/bash\necho 'Launching {}'\necho 'This is a demo game executable'\n",
-                game.app_title
-            );
-            if let Err(e) = std::fs::write(&executable_path, script_content) {
-                eprintln!("Failed to create demo executable: {}", e);
-            }
-
-            // Make it executable on Unix
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(metadata) = std::fs::metadata(&executable_path) {
-                    let mut perms = metadata.permissions();
-                    perms.set_mode(0o755);
-                    let _ = std::fs::set_permissions(&executable_path, perms);
-                }
-            }
-
-            // Save the installation record
-            if let Err(e) = game.save(&config) {
-                eprintln!("Failed to save game installation: {}", e);
-            }
-        });
+        // TODO: Implement real game installation
+        self.status_message = format!("Installation for {} not implemented yet.", app_name);
     }
 
     fn handle_launch(&mut self, app_name: String) {
@@ -282,14 +199,7 @@ impl eframe::App for LauncherApp {
                     {
                         match action {
                             LibraryAction::Install(app_name) => {
-                                self.handle_install(app_name.clone());
-                                // Mark installation complete after delay
-                                let mut view = self.library_view.clone();
-                                let app_name_clone = app_name.clone();
-                                std::thread::spawn(move || {
-                                    std::thread::sleep(std::time::Duration::from_secs(3));
-                                    view.mark_installation_complete(&app_name_clone);
-                                });
+                                self.handle_install(app_name);
                             }
                             LibraryAction::Launch(app_name) => {
                                 self.handle_launch(app_name);
