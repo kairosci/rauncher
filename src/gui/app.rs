@@ -30,6 +30,8 @@ pub struct LauncherApp {
     status_message: String,
     loading_library: bool,
     library_promise: Option<Promise<Result<Vec<Game>>>>,
+    // Promesse di installazione in corso: (app_name, promise)
+    install_promises: Vec<(String, Promise<Result<()>>)>,
 }
 
 impl LauncherApp {
@@ -59,6 +61,7 @@ impl LauncherApp {
             status_message: String::new(),
             loading_library: false,
             library_promise: None,
+            install_promises: Vec::new(),
         }
     }
 
@@ -103,8 +106,29 @@ impl LauncherApp {
     }
 
     fn handle_install(&mut self, app_name: String) {
-        // TODO: Implement real game installation
-        self.status_message = format!("Installation for {} not implemented yet.", app_name);
+        // Esegue l'installazione in background e aggiorna la UI
+        let config = Arc::clone(&self.config);
+        let auth = Arc::clone(&self.auth);
+        let mut library_view = self.library_view.clone();
+        library_view.mark_installation_started(&app_name);
+        self.library_view = library_view.clone();
+        self.status_message = format!("Installazione avviata per {}...", app_name);
+
+        let app_name_clone = app_name.clone();
+        let promise = Promise::spawn_thread("install_game", move || {
+            let rt = tokio::runtime::Runtime::new()
+                .expect("Failed to create Tokio runtime for install");
+            let config = (*config).clone();
+            let auth = (*auth.lock().unwrap()).clone();
+            rt.block_on(async move {
+                match GameManager::new(config, auth) {
+                    Ok(manager) => manager.install_game(&app_name_clone).await,
+                    Err(e) => Err(e),
+                }
+            })
+        });
+
+        self.install_promises.push((app_name, promise));
     }
 
     fn handle_launch(&mut self, app_name: String) {
@@ -219,6 +243,36 @@ impl eframe::App for LauncherApp {
                 self.status_message.clear();
             }
         });
+
+        // Gestisci completamento installazioni senza mutare self durante l'iterazione
+        let mut completed: Vec<(usize, String, Option<String>)> = Vec::new();
+        for (idx, (app_name, p)) in self.install_promises.iter().enumerate() {
+            if let Some(result) = p.ready() {
+                match result {
+                    Ok(()) => completed.push((idx, app_name.clone(), None)),
+                    Err(e) => completed.push((idx, app_name.clone(), Some(format!("{}", e)))),
+                }
+            }
+        }
+        let mut need_reload_installed = false;
+        for (idx, app_name, maybe_err) in completed.into_iter().rev() {
+            // rimuovi promise completata
+            self.install_promises.remove(idx);
+            match maybe_err {
+                None => {
+                    self.status_message = format!("Installazione completata per {}", app_name);
+                    self.library_view.mark_installation_complete(&app_name);
+                    need_reload_installed = true;
+                }
+                Some(err) => {
+                    self.status_message = format!("Installazione fallita per {}: {}", app_name, err);
+                    self.library_view.mark_installation_complete(&app_name);
+                }
+            }
+        }
+        if need_reload_installed {
+            self.load_installed_games();
+        }
 
         // Request repaint for animations/updates
         ctx.request_repaint_after(std::time::Duration::from_millis(100));

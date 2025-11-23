@@ -413,12 +413,20 @@ impl EpicClient {
         // This allows the installation process to proceed
         log::warn!("Using mock manifest data - real CDN download not implemented");
 
+        // Choose a platform-appropriate launcher name for our mock manifest
+        let launcher_name = {
+            #[cfg(target_os = "windows")]
+            { format!("{}.bat", app_name) }
+            #[cfg(not(target_os = "windows"))]
+            { "run.sh".to_string() }
+        };
+
         Ok(GameManifest {
             manifest_file_version: "21".to_string(),
             is_file_data: true,
             app_name: app_name.to_string(),
             app_version: "1.0.0".to_string(),
-            launch_exe: format!("{}.exe", app_name),
+            launch_exe: launcher_name,
             launch_command: String::new(),
             build_size: 0,
             file_list: Vec::new(),

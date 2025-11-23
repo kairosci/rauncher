@@ -94,7 +94,7 @@ impl LibraryView {
                                 .lock()
                                 .unwrap()
                                 .contains(&game.app_name);
-                            
+
                             if let Some(game_action) = GameCard::show(ui, game, is_installed, is_installing) {
                                 action = Some(match game_action {
                                     GameCardAction::Install(name) => LibraryAction::Install(name),
@@ -111,6 +111,13 @@ impl LibraryView {
         });
 
         action
+    }
+
+    pub fn mark_installation_started(&mut self, app_name: &str) {
+        let mut list = self.installing_games.lock().unwrap();
+        if !list.iter().any(|n| n == app_name) {
+            list.push(app_name.to_string());
+        }
     }
 
     pub fn mark_installation_complete(&mut self, app_name: &str) {
