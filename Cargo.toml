@@ -1,0 +1,25 @@
+[package]
+name = "rauncher"
+version = "0.1.0"
+edition = "2021"
+authors = ["R Games Launcher Contributors"]
+description = "An Epic Games launcher for Linux written in Rust"
+license = "MIT"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+tokio = { version = "1.41", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "cookies"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+log = "0.4"
+env_logger = "0.11"
+directories = "5.0"
+toml = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+eframe = "0.29"
+egui = "0.29"
+poll-promise = "0.3"
+webbrowser = "1.0.6"
+tempfile = "3.22.0"
