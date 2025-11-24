@@ -22,7 +22,6 @@ async fn main() -> Result<()> {
     // Initialize auth manager
     let mut auth = AuthManager::new()?;
 
-    // Launch GUI by default if no command is specified
     match cli.command {
         None => {
             // Launch GUI when no command is provided
@@ -37,11 +36,11 @@ async fn main() -> Result<()> {
             };
 
             if let Err(e) = eframe::run_native(
-                "R Games Launcher",
+                "Rauncher",
                 native_options,
                 Box::new(|cc| Ok(Box::new(LauncherApp::new(cc)))),
             ) {
-                eprintln!("Failed to run GUI: {}", e);
+                log::error!("Failed to run GUI: {}", e);
                 std::process::exit(1);
             }
         }
@@ -50,45 +49,36 @@ async fn main() -> Result<()> {
             Commands::Auth { logout } => {
                 if logout {
                     auth.logout()?;
-                    println!("Successfully logged out");
+                    log::info!("Successfully logged out");
                 } else {
                     use rauncher::api::EpicClient;
 
-                    println!("Epic Games Store Authentication");
-                    println!("================================");
-                    println!();
+                    log::info!("Epic Games Store Authentication");
 
                     let client = EpicClient::new()?;
 
-                    println!("Starting authentication process...");
+                    log::info!("Starting authentication process...");
 
                     match client.authenticate().await {
                         Ok((user_code, verification_url, token)) => {
-                            println!();
-                            println!("Please authenticate using your web browser:");
-                            println!();
-                            println!("  1. Open this URL: {}", verification_url);
-                            println!("  2. Enter this code: {}", user_code);
-                            println!();
-                            println!("Waiting for authentication...");
+                            log::info!("Please authenticate using your web browser:");
+                            log::info!("Open this URL: {}", verification_url);
+                            log::info!("Enter this code: {}", user_code);
+                            log::info!("Waiting for authentication...");
 
                             // Save the token
                             auth.set_token(token)?;
 
-                            println!();
-                            println!("✓ Successfully authenticated with Epic Games Store!");
-                            println!();
-                            println!("You can now:");
-                            println!("  - List your games: rauncher list");
-                            println!("  - Install a game: rauncher install <app_name>");
+                            log::info!("✓ Successfully authenticated with Epic Games Store!");
+                            log::info!("You can now:");
+                            log::info!("List your games: rauncher list");
+                            log::info!("Install a game: rauncher install <app_name>");
                         }
                         Err(e) => {
-                            eprintln!();
-                            eprintln!("Authentication failed: {}", e);
-                            eprintln!();
-                            eprintln!("Please try again. If the problem persists, check:");
-                            eprintln!("  - Your internet connection");
-                            eprintln!("  - Epic Games services status");
+                            log::error!("Authentication failed: {}", e);
+                            log::error!("Please try again. If the problem persists, check:");
+                            log::error!("Your internet connection");
+                            log::error!("Epic Games services status");
                             std::process::exit(1);
                         }
                     }
@@ -101,34 +91,34 @@ async fn main() -> Result<()> {
                     let games = manager.list_installed()?;
 
                     if games.is_empty() {
-                        println!("No games installed");
+                        log::info!("No games installed");
                     } else {
-                        println!("Installed Games:");
-                        println!("================");
+                        log::info!("Installed Games:");
+                        log::info!("================");
                         for game in games {
-                            println!(
+                            log::info!(
                                 "  {} - {} (v{})",
                                 game.app_name, game.app_title, game.app_version
                             );
-                            println!("    Path: {:?}", game.install_path);
+                            log::info!("    Path: {:?}", game.install_path);
                         }
                     }
                 } else {
                     if !auth.is_authenticated() {
-                        eprintln!("Error: Not authenticated. Run 'rauncher auth' first.");
+                        log::error!("Error: Not authenticated. Run 'rauncher auth' first.");
                         std::process::exit(1);
                     }
 
-                    let manager = GameManager::new(config, auth)?;
+                    let mut manager = GameManager::new(config, auth)?;
                     let games = manager.list_library().await?;
 
                     if games.is_empty() {
-                        println!("No games in library (or authentication required)");
+                        log::info!("No games in library (or authentication required)");
                     } else {
-                        println!("Library:");
-                        println!("========");
+                        log::info!("Library:");
+                        log::info!("========");
                         for game in games {
-                            println!(
+                            log::info!(
                                 "  {} - {} (v{})",
                                 game.app_name, game.app_title, game.app_version
                             );
@@ -139,17 +129,17 @@ async fn main() -> Result<()> {
 
             Commands::Install { app_name } => {
                 if !auth.is_authenticated() {
-                    eprintln!("Error: Not authenticated. Run 'rauncher auth' first.");
+                    log::error!("Error: Not authenticated. Run 'rauncher auth' first.");
                     std::process::exit(1);
                 }
 
-                let manager = GameManager::new(config, auth)?;
-                println!("Installing game: {}", app_name);
+                let mut manager = GameManager::new(config, auth)?;
+                log::info!("Installing game: {}", app_name);
 
                 match manager.install_game(&app_name).await {
-                    Ok(()) => println!("Game installed successfully!"),
+                    Ok(()) => log::info!("Game installed successfully!"),
                     Err(e) => {
-                        eprintln!("Failed to install game: {}", e);
+                        log::error!("Failed to install game: {}", e);
                         std::process::exit(1);
                     }
                 }
@@ -159,9 +149,9 @@ async fn main() -> Result<()> {
                 let manager = GameManager::new(config, auth)?;
 
                 match manager.launch_game(&app_name) {
-                    Ok(()) => println!("Game launched successfully!"),
+                    Ok(()) => log::info!("Game launched successfully!"),
                     Err(e) => {
-                        eprintln!("Failed to launch game: {}", e);
+                        log::error!("Failed to launch game: {}", e);
                         std::process::exit(1);
                     }
                 }
@@ -171,9 +161,9 @@ async fn main() -> Result<()> {
                 let manager = GameManager::new(config, auth)?;
 
                 match manager.uninstall_game(&app_name) {
-                    Ok(()) => println!("Game uninstalled successfully!"),
+                    Ok(()) => log::info!("Game uninstalled successfully!"),
                     Err(e) => {
-                        eprintln!("Failed to uninstall game: {}", e);
+                        log::error!("Failed to uninstall game: {}", e);
                         std::process::exit(1);
                     }
                 }
@@ -188,42 +178,39 @@ async fn main() -> Result<()> {
                     .find(|g| g.app_name == app_name)
                 {
                     Some(game) => {
-                        println!("Game Information:");
-                        println!("================");
-                        println!("Name: {}", game.app_name);
-                        println!("Title: {}", game.app_title);
-                        println!("Version: {}", game.app_version);
-                        println!("Install Path: {:?}", game.install_path);
-                        println!("Executable: {}", game.executable);
+                        log::info!("Game Information:");
+                        log::info!("================");
+                        log::info!("Name: {}", game.app_name);
+                        log::info!("Title: {}", game.app_title);
+                        log::info!("Version: {}", game.app_version);
+                        log::info!("Install Path: {:?}", game.install_path);
+                        log::info!("Executable: {}", game.executable);
                     }
                     None => {
-                        eprintln!("Game not found: {}", app_name);
+                        log::error!("Game not found: {}", app_name);
                         std::process::exit(1);
                     }
                 }
             }
 
             Commands::Status => {
-                println!("R Games Launcher Status");
-                println!("=======================");
-                println!();
-                println!("Version: {}", env!("CARGO_PKG_VERSION"));
-                println!(
+                log::info!("R Games Launcher Status");
+                log::info!("=======================");
+                log::info!("Version: {}", env!("CARGO_PKG_VERSION"));
+                log::info!(
                     "Authenticated: {}",
                     if auth.is_authenticated() { "Yes" } else { "No" }
                 );
-                println!();
-                println!("Configuration:");
-                println!("  Install Directory: {:?}", config.install_dir);
-                println!("  Log Level: {}", config.log_level);
-                println!();
+                log::info!("Configuration:");
+                log::info!("  Install Directory: {:?}", config.install_dir);
+                log::info!("  Log Level: {}", config.log_level);
 
                 if let Ok(config_path) = Config::config_path() {
-                    println!("Config Path: {:?}", config_path);
+                    log::info!("Config Path: {:?}", config_path);
                 }
 
                 if let Ok(data_dir) = Config::data_dir() {
-                    println!("Data Directory: {:?}", data_dir);
+                    log::info!("Data Directory: {:?}", data_dir);
                 }
             }
 
@@ -232,31 +219,31 @@ async fn main() -> Result<()> {
                 check_only,
             } => {
                 if !auth.is_authenticated() {
-                    eprintln!("Error: Not authenticated. Run 'rauncher auth' first.");
+                    log::error!("Error: Not authenticated. Run 'rauncher auth' first.");
                     std::process::exit(1);
                 }
 
                 let manager = GameManager::new(config, auth)?;
 
                 if check_only {
-                    println!("Checking for updates for {}...", app_name);
+                    log::info!("Checking for updates for {}...", app_name);
                     match manager.check_for_updates(&app_name).await {
                         Ok(Some(version)) => {
-                            println!("✓ Update available: version {}", version);
+                            log::info!("✓ Update available: version {}", version);
                         }
                         Ok(None) => {
-                            println!("✓ Game is up to date");
+                            log::info!("✓ Game is up to date");
                         }
                         Err(e) => {
-                            eprintln!("Failed to check for updates: {}", e);
+                            log::error!("Failed to check for updates: {}", e);
                             std::process::exit(1);
                         }
                     }
                 } else {
                     match manager.update_game(&app_name).await {
-                        Ok(()) => println!("✓ Update complete!"),
+                        Ok(()) => log::info!("✓ Update complete!"),
                         Err(e) => {
-                            eprintln!("Failed to update game: {}", e);
+                            log::error!("Failed to update game: {}", e);
                             std::process::exit(1);
                         }
                     }
@@ -269,14 +256,14 @@ async fn main() -> Result<()> {
                 upload,
             } => {
                 if !auth.is_authenticated() {
-                    eprintln!("Error: Not authenticated. Run 'rauncher auth' first.");
+                    log::error!("Error: Not authenticated. Run 'rauncher auth' first.");
                     std::process::exit(1);
                 }
 
                 let manager = GameManager::new(config, auth)?;
 
                 if !download && !upload {
-                    eprintln!("Error: Specify --download or --upload");
+                    log::error!("Error: Specify --download or --upload");
                     std::process::exit(1);
                 }
 
@@ -284,7 +271,7 @@ async fn main() -> Result<()> {
                     match manager.download_cloud_saves(&app_name).await {
                         Ok(()) => {}
                         Err(e) => {
-                            eprintln!("Failed to download cloud saves: {}", e);
+                            log::error!("Failed to download cloud saves: {}", e);
                             std::process::exit(1);
                         }
                     }
@@ -294,7 +281,7 @@ async fn main() -> Result<()> {
                     match manager.upload_cloud_saves(&app_name).await {
                         Ok(()) => {}
                         Err(e) => {
-                            eprintln!("Failed to upload cloud saves: {}", e);
+                            log::error!("Failed to upload cloud saves: {}", e);
                             std::process::exit(1);
                         }
                     }
@@ -317,7 +304,7 @@ async fn main() -> Result<()> {
                     native_options,
                     Box::new(|cc| Ok(Box::new(LauncherApp::new(cc)))),
                 ) {
-                    eprintln!("Failed to run GUI: {}", e);
+                    log::error!("Failed to run GUI: {}", e);
                     std::process::exit(1);
                 }
             }

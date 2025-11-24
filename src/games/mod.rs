@@ -99,16 +99,35 @@ impl GameManager {
         })
     }
 
-    pub async fn list_library(&self) -> Result<Vec<Game>> {
-        let token = self.auth.get_token()?;
-        self.client.get_games(token).await
+    async fn ensure_valid_token(&mut self) -> Result<crate::auth::AuthToken> {
+        // Se il token è valido e non in scadenza imminente, riutilizziamolo
+        if let Ok(tok) = self.auth.get_token() {
+            if !self.auth.token_needs_refresh() {
+                return Ok(tok.clone());
+            }
+        }
+
+        // Prova a fare refresh
+        let refresh = self
+            .auth
+            .get_refresh_token()
+            .ok_or_else(|| Error::NotAuthenticated)?;
+        let new_tok = self.client.refresh_token(&refresh).await?;
+        // Persisti su disco per sincronizzare altri componenti
+        self.auth.set_token(new_tok.clone())?;
+        Ok(new_tok)
+    }
+
+    pub async fn list_library(&mut self) -> Result<Vec<Game>> {
+        let token = self.ensure_valid_token().await?;
+        self.client.get_games(&token).await
     }
 
     pub fn list_installed(&self) -> Result<Vec<InstalledGame>> {
         InstalledGame::list_installed(&self.config)
     }
 
-    pub async fn install_game(&self, app_name: &str) -> Result<()> {
+    pub async fn install_game(&mut self, app_name: &str) -> Result<()> {
         // TODO: Check available disk space before installation
         // TODO: Implement resume capability for interrupted installations
         // TODO: Add progress tracking with download speed and ETA
@@ -116,18 +135,18 @@ impl GameManager {
         // TODO: Handle installation cancellation gracefully
         // TODO: Support selective installation (choose components/languages)
 
-        let token = self.auth.get_token()?;
+        let token = self.ensure_valid_token().await?;
 
         log::info!("Starting installation for game: {}", app_name);
 
         // Download and parse game manifest
-        println!("Downloading game manifest...");
-        let manifest = self.client.download_manifest(token, app_name).await?;
+        log::info!("Downloading game manifest...");
+        let manifest = self.client.download_manifest(&token, app_name).await?;
 
         log::info!("Manifest downloaded: version {}", manifest.app_version);
-        println!("Manifest version: {}", manifest.app_version);
-        println!("Build size: {} bytes", manifest.build_size);
-        println!("Files to download: {}", manifest.file_list.len());
+        log::info!("Manifest version: {}", manifest.app_version);
+        log::info!("Build size: {} bytes", manifest.build_size);
+        log::info!("Files to download: {}", manifest.file_list.len());
 
         // Create install directory
         let install_path = self.config.install_dir.join(app_name);
@@ -144,10 +163,10 @@ impl GameManager {
             // TODO: Handle sparse files correctly
             // TODO: Track and save download progress for resume capability
 
-            println!("\nDownloading game files...");
+            log::info!("Downloading game files...");
 
             for (idx, file) in manifest.file_list.iter().enumerate() {
-                println!(
+                log::info!(
                     "  [{}/{}] {}",
                     idx + 1,
                     manifest.file_list.len(),
@@ -156,17 +175,19 @@ impl GameManager {
 
                 // Download chunks for this file
                 for chunk in &file.file_chunk_parts {
-                    let _chunk_data = self.client.download_chunk(&chunk.guid, token).await?;
+                    let _chunk_data = self.client.download_chunk(&chunk.guid, &token).await?;
                     // TODO: Reconstruct file from chunks
                     // TODO: Write chunks to file at correct offsets
                     // TODO: Verify chunk integrity before writing
                 }
             }
 
-            println!("✓ Game files downloaded");
+            log::info!("✓ Game files downloaded");
         } else {
-            println!("\nNote: Manifest parsing complete, but CDN download not fully implemented.");
-            println!("Creating installation record with manifest data...");
+            log::warn!(
+                "Note: Manifest parsing complete, but CDN download not fully implemented."
+            );
+            log::info!("Creating installation record with manifest data...");
         }
 
         // Create a minimal launcher/executable so the game can be launched
@@ -213,7 +234,7 @@ impl GameManager {
         installed_game.save(&self.config)?;
 
         log::info!("Game installation completed for: {}", app_name);
-        println!("\n✓ Installation complete!");
+        log::info!("✓ Installation complete!");
 
         Ok(())
     }
@@ -287,14 +308,14 @@ impl GameManager {
         // Check if update is available
         match self.check_for_updates(app_name).await? {
             Some(new_version) => {
-                println!("Update available: {}", new_version);
-                println!("Downloading update...");
+                log::info!("Update available: {}", new_version);
+                log::info!("Downloading update...");
 
                 // Download new manifest
                 let manifest = self.client.download_manifest(token, app_name).await?;
 
                 // Update game files (differential update would be more efficient)
-                println!("Updating game files...");
+                log::info!("Updating game files...");
 
                 // Update installation record
                 let mut game = InstalledGame::load(&self.config, app_name)?;
@@ -302,11 +323,11 @@ impl GameManager {
                 game.executable = manifest.launch_exe.clone();
                 game.save(&self.config)?;
 
-                println!("✓ Game updated to version {}", manifest.app_version);
+                log::info!("✓ Game updated to version {}", manifest.app_version);
                 Ok(())
             }
             None => {
-                println!("Game is already up to date");
+                log::info!("Game is already up to date");
                 Ok(())
             }
         }
@@ -324,23 +345,23 @@ impl GameManager {
         let game = InstalledGame::load(&self.config, app_name)?;
 
         log::info!("Downloading cloud saves for {}", app_name);
-        println!("Fetching cloud saves...");
+        log::info!("Fetching cloud saves...");
 
         let saves = self.client.get_cloud_saves(token, app_name).await?;
 
         if saves.is_empty() {
-            println!("No cloud saves found");
+            log::info!("No cloud saves found");
             return Ok(());
         }
 
-        println!("Found {} cloud save(s)", saves.len());
+        log::info!("Found {} cloud save(s)", saves.len());
 
         // Create saves directory
         let saves_dir = game.install_path.join("saves");
         fs::create_dir_all(&saves_dir)?;
 
         for save in saves {
-            println!("  Downloading: {}", save.filename);
+            log::info!("  Downloading: {}", save.filename);
             let save_data = self.client.download_cloud_save(token, &save.id).await?;
 
             let save_path = saves_dir.join(&save.filename);
@@ -349,7 +370,7 @@ impl GameManager {
             log::info!("Downloaded save: {:?}", save_path);
         }
 
-        println!("✓ Cloud saves downloaded");
+        log::info!("✓ Cloud saves downloaded");
         Ok(())
     }
 
@@ -359,12 +380,12 @@ impl GameManager {
         let game = InstalledGame::load(&self.config, app_name)?;
 
         log::info!("Uploading cloud saves for {}", app_name);
-        println!("Uploading cloud saves...");
+        log::info!("Uploading cloud saves...");
 
         let saves_dir = game.install_path.join("saves");
 
         if !saves_dir.exists() {
-            println!("No local saves found");
+            log::info!("No local saves found");
             return Ok(());
         }
 
@@ -376,7 +397,7 @@ impl GameManager {
 
             if path.is_file() {
                 let save_data = fs::read(&path)?;
-                println!(
+                log::info!(
                     "  Uploading: {}",
                     path.file_name().unwrap().to_string_lossy()
                 );
@@ -388,7 +409,7 @@ impl GameManager {
             }
         }
 
-        println!("✓ Uploaded {} save file(s)", uploaded);
+        log::info!("✓ Uploaded {} save file(s)", uploaded);
         Ok(())
     }
 }

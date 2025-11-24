@@ -2,7 +2,7 @@ use eframe::egui;
 use poll_promise::Promise;
 use std::sync::{Arc, Mutex};
 
-use crate::api::{EpicClient, Game};
+use crate::api::Game;
 use crate::auth::AuthManager;
 use crate::config::Config;
 use crate::games::{GameManager, InstalledGame};
@@ -22,7 +22,6 @@ pub struct LauncherApp {
     state: AppState,
     auth: Arc<Mutex<AuthManager>>,
     config: Arc<Config>,
-    epic_client: Arc<EpicClient>,
     auth_view: AuthView,
     library_view: LibraryView,
     library_games: Vec<Game>,
@@ -30,7 +29,6 @@ pub struct LauncherApp {
     status_message: String,
     loading_library: bool,
     library_promise: Option<Promise<Result<Vec<Game>>>>,
-    // Promesse di installazione in corso: (app_name, promise)
     install_promises: Vec<(String, Promise<Result<()>>)>,
 }
 
@@ -40,7 +38,6 @@ impl LauncherApp {
 
         let config = Config::load().unwrap_or_default();
         let auth = AuthManager::new().unwrap_or_default();
-        let epic_client = EpicClient::new().unwrap();
 
         // Check if already authenticated
         let is_authenticated = auth.is_authenticated();
@@ -53,7 +50,6 @@ impl LauncherApp {
             },
             auth: Arc::new(Mutex::new(auth)),
             config: Arc::new(config),
-            epic_client: Arc::new(epic_client),
             auth_view: AuthView::default(),
             library_view: LibraryView::default(),
             library_games: Vec::new(),
@@ -79,20 +75,20 @@ impl LauncherApp {
         self.loading_library = true;
         self.status_message = "Loading library...".to_string();
 
-        let auth_manager = self.auth.lock().unwrap();
-        if let Ok(token) = auth_manager.get_token() {
-            let token = token.clone();
-            let epic_client = Arc::clone(&self.epic_client);
+        // Usa GameManager per beneficiare dell'auto-refresh del token
+        let config = (*self.config).clone();
+        let auth = (*self.auth.lock().unwrap()).clone();
 
-            self.library_promise = Some(Promise::spawn_thread("load_library", move || {
-                let rt = tokio::runtime::Runtime::new()
-                    .expect("Failed to create Tokio runtime for library load");
-                rt.block_on(async move { epic_client.get_games(&token).await })
-            }));
-        } else {
-            self.status_message = "Authentication token not found.".to_string();
-            self.loading_library = false;
-        }
+        self.library_promise = Some(Promise::spawn_thread("load_library", move || {
+            let rt = tokio::runtime::Runtime::new()
+                .expect("Failed to create Tokio runtime for library load");
+            rt.block_on(async move {
+                match GameManager::new(config, auth) {
+                    Ok(mut manager) => manager.list_library().await,
+                    Err(e) => Err(e),
+                }
+            })
+        }));
     }
 
     fn load_installed_games(&mut self) {
@@ -122,7 +118,7 @@ impl LauncherApp {
             let auth = (*auth.lock().unwrap()).clone();
             rt.block_on(async move {
                 match GameManager::new(config, auth) {
-                    Ok(manager) => manager.install_game(&app_name_clone).await,
+                    Ok(mut manager) => manager.install_game(&app_name_clone).await,
                     Err(e) => Err(e),
                 }
             })
@@ -257,7 +253,7 @@ impl eframe::App for LauncherApp {
         let mut need_reload_installed = false;
         for (idx, app_name, maybe_err) in completed.into_iter().rev() {
             // rimuovi promise completata
-            self.install_promises.remove(idx);
+            let _ = self.install_promises.remove(idx);
             match maybe_err {
                 None => {
                     self.status_message = format!("Installazione completata per {}", app_name);
