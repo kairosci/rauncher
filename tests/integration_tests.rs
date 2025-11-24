@@ -12,6 +12,7 @@ fn test_config_creation_and_loading() {
     let config = Config {
         install_dir: temp_dir.path().join("games"),
         log_level: "info".to_string(),
+        ..Config::default()
     };
 
     // Save it
@@ -40,6 +41,7 @@ fn test_game_manager_creation() {
     let config = Config {
         install_dir: temp_dir.path().join("games"),
         log_level: "info".to_string(),
+        ..Config::default()
     };
 
     let auth = AuthManager::new().unwrap();
@@ -55,6 +57,7 @@ fn test_list_installed_games_empty() {
     let config = Config {
         install_dir: temp_dir.path().join("games"),
         log_level: "info".to_string(),
+        ..Config::default()
     };
 
     let auth = AuthManager::new().unwrap();
@@ -88,6 +91,7 @@ fn test_invalid_install_path_handling() {
     let config = Config {
         install_dir: temp_dir.path().join("games"),
         log_level: "info".to_string(),
+        ..Config::default()
     };
 
     let auth = AuthManager::new().unwrap();

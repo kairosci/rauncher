@@ -1,9 +1,10 @@
-use reqwest::Client;
+use reqwest::{Client, Proxy};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::auth::AuthToken;
 use crate::{Error, Result};
+use crate::config::Config;
 
 // Request timeout configuration
 const REQUEST_TIMEOUT_SECS: u64 = 30;
@@ -152,6 +153,22 @@ impl EpicClient {
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .build()?;
 
+        Ok(Self { client })
+    }
+
+    /// Costruisce un client HTTP tenendo conto della configurazione (es. proxy)
+    pub fn with_config(config: &Config) -> Result<Self> {
+        let mut builder = Client::builder()
+            .user_agent("rauncher/0.1.0")
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS));
+
+        if let Some(proxy_url) = &config.proxy {
+            if !proxy_url.is_empty() {
+                builder = builder.proxy(Proxy::all(proxy_url)?);
+            }
+        }
+
+        let client = builder.build()?;
         Ok(Self { client })
     }
 

@@ -91,7 +91,8 @@ pub struct GameManager {
 
 impl GameManager {
     pub fn new(config: Config, auth: AuthManager) -> Result<Self> {
-        let client = EpicClient::new()?;
+        // Rispetta eventuale proxy configurato
+        let client = EpicClient::with_config(&config)?;
         Ok(Self {
             config,
             auth,
@@ -128,7 +129,7 @@ impl GameManager {
     }
 
     pub async fn install_game(&mut self, app_name: &str) -> Result<()> {
-        // TODO: Check available disk space before installation
+        // Check available disk space before installation
         // TODO: Implement resume capability for interrupted installations
         // TODO: Add progress tracking with download speed and ETA
         // TODO: Verify file integrity after reconstruction
@@ -150,6 +151,26 @@ impl GameManager {
 
         // Create install directory
         let install_path = self.config.install_dir.join(app_name);
+
+        // Calcola spazio richiesto e disponibile
+        let required_bytes = if manifest.build_size > 0 {
+            manifest.build_size
+        } else {
+            // Fallback prudenziale se il manifest mock non indica dimensione
+            100 * 1024 * 1024 // 100 MB
+        };
+
+        let target_dir = install_path.parent().unwrap_or(&self.config.install_dir);
+        let available = fs2::available_space(target_dir)
+            .map_err(|e| Error::Other(format!("Failed to query disk space: {}", e)))?;
+
+        if available < required_bytes {
+            return Err(Error::Other(format!(
+                "Not enough disk space. Required: {} MB, Available: {} MB",
+                (required_bytes as f64 / (1024.0 * 1024.0)).ceil() as u64,
+                (available as f64 / (1024.0 * 1024.0)).floor() as u64
+            )));
+        }
         fs::create_dir_all(&install_path)?;
 
         log::info!("Created install directory: {:?}", install_path);
